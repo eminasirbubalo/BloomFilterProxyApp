@@ -63,10 +63,6 @@ class DataLoaderService(
         println("Učitavanje završeno! Ukupno dodano malicioznih URL-ova: $count")
     }
 
-    /**
-     * Funkcija koja osigurava da su svi URL-ovi u bazi i Bloom Filteru istog formata.
-     * npr. "https://www.facebook.com/" -> "facebook.com"
-     */
     private fun normalizeUrl(url: String): String {
         return url.trim()
             .lowercase()

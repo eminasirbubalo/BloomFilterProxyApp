@@ -2,32 +2,230 @@
 <html lang="hr">
 <head>
     <meta charset="UTF-8">
-    <title>SafeProxy - Sigurna Tražilica</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anti-Phishing Shield | Bloom Filter</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f7f6; margin: 0; }
-        .container { text-align: center; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
-        h1 { color: #2c3e50; margin-bottom: 20px; }
-        input[type="text"] { width: 80%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; margin-bottom: 20px; outline: none; transition: border-color 0.3s; }
-        input[type="text"]:focus { border-color: #3498db; }
-        button { background-color: #3498db; color: white; border: none; padding: 12px 25px; font-size: 16px; border-radius: 6px; cursor: pointer; transition: background 0.3s; }
-        button:hover { background-color: #2980b9; }
-        .info { margin-top: 20px; font-size: 12px; color: #7f8c8d; }
+        :root {
+            --primary: #1a73e8;
+            --success: #34a853;
+            --danger: #d93025;
+            --dark: #202124;
+            --gray: #f8f9fa;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f1f3f4;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+            margin-bottom: 25px;
+        }
+
+        h1, h2 { color: var(--dark); margin-top: 0; }
+        p { color: #5f6368; }
+
+        /* Search Box */
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 14px;
+            border: 2px solid #dfe1e5;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus { border-color: var(--primary); }
+
+        button {
+            cursor: pointer;
+            border: none;
+            font-weight: bold;
+            border-radius: 8px;
+            transition: all 0.2s;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-check { background: var(--primary); color: white; padding: 0 25px; }
+        .btn-check:hover { background: #1557b0; box-shadow: 0 1px 6px rgba(32,33,36,0.28); }
+
+        .btn-benchmark {
+            background: var(--success);
+            color: white;
+            width: 100%;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        .btn-benchmark:hover { background: #2d8e47; }
+        button:disabled { background: #bdc3c7; cursor: not-allowed; }
+
+        /* Results Display */
+        #searchResult {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            text-align: center;
+            font-weight: bold;
+            border: 1px solid transparent;
+        }
+
+        /* Benchmark Stats Grid */
+        .bench-grid {
+            display: none;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 25px;
+        }
+
+        .stat-card {
+            background: var(--gray);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border-bottom: 4px solid var(--success);
+        }
+
+        .stat-card h4 { margin: 0; font-size: 12px; color: #70757a; }
+        .stat-card div { font-size: 20px; font-weight: bold; margin-top: 8px; color: var(--dark); }
+
+        .improvement-box {
+            grid-column: 1 / -1;
+            background: var(--dark);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .improvement-box span {
+            display: block;
+            font-size: 32px;
+            color: var(--success);
+            margin-top: 5px;
+            font-weight: bold;
+        }
+
+        #loader { display: none; text-align: center; margin: 15px 0; color: var(--primary); font-weight: 500; }
     </style>
 </head>
 <body>
+
 <div class="container">
-    <h1>🛡️ SafeProxy</h1>
-    <p>Unesite URL za sigurnu provjeru i preusmjeravanje</p>
+    <div class="section">
+        <h2>🛡️ URL Sigurnosni Proxy</h2>
+        <p>Unesite URL kako biste provjerili nalazi li se u našoj bazi malicioznih stranica.</p>
 
-    <form action="/proxy" method="get">
-        <input type="text" name="url" placeholder="https://example.com" required>
-        <br>
-        <button type="submit">Provjeri i kreni</button>
-    </form>
+        <div class="search-box">
+            <input type="text" id="urlInput" placeholder="Npr. facebook.unitedcolleges.net ili google.com">
+            <button class="btn-check" onclick="checkProxy()">Provjeri</button>
+        </div>
 
-    <div class="info">
-        Zaštićeno Bloom filterom (Dataset: 650k+ malicioznih URL-ova)
+        <div id="searchResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>📊 Analiza Performansi</h2>
+        <p>Usporedite brzinu čiste baze podataka (Regex) naspram optimiziranog Bloom Filter pristupa.</p>
+
+        <button class="btn-benchmark" id="benchBtn" onclick="runBenchmark()">Pokreni Stress Test</button>
+        <div id="loader">Vrši se simulacija tisuća upita...</div>
+
+        <div id="benchResults" class="bench-grid">
+            <div class="stat-card">
+                <h4>Testirano URL-ova</h4>
+                <div id="resTotal">-</div>
+            </div>
+            <div class="stat-card">
+                <h4>Samo Baza</h4>
+                <div id="resDb">-</div>
+            </div>
+            <div class="stat-card">
+                <h4>Bloom + Baza</h4>
+                <div id="resBloom">-</div>
+            </div>
+            <div class="improvement-box">
+                Ukupno ubrzanje sustava:
+                <span id="resImprove">-</span>
+            </div>
+        </div>
     </div>
 </div>
+
+
+
+<script>
+    // 1. FUNKCIJA ZA PROVJERU URL-a (Proxy)
+    function checkProxy() {
+        const urlInput = document.getElementById('urlInput');
+        const urlValue = urlInput.value.trim();
+
+        if (!urlValue) {
+            alert("Molimo unesite URL!");
+            return;
+        }
+
+        // Umjesto fetch-a, direktno šaljemo browser na tvoj endpoint.
+        // Ako je siguran, kontroler će uraditi redirect (302 Found).
+        // Ako je opasan, kontroler će ispisati HTML poruku (403 Forbidden).
+        window.location.href = `/api/proxy?url=${encodeURIComponent(urlValue)}`;
+    }
+    // 2. FUNKCIJA ZA BENCHMARK
+    async function runBenchmark() {
+        const btn = document.getElementById('benchBtn');
+        const loader = document.getElementById('loader');
+        const grid = document.getElementById('benchResults');
+
+        btn.disabled = true;
+        loader.style.display = 'block';
+        grid.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/benchmark');
+            const data = await response.json();
+
+            document.getElementById('resTotal').innerText = data.total_urls_tested;
+            document.getElementById('resDb').innerText = data.db_only_time_ms + " ms";
+            document.getElementById('resBloom').innerText = data.bloom_hybrid_time_ms + " ms";
+            document.getElementById('resImprove').innerText = data.performance_improvement_percent;
+
+            grid.style.display = 'grid';
+        } catch (e) {
+            alert("Greška prilikom izvršavanja benchmarka.");
+        } finally {
+            btn.disabled = false;
+            loader.style.display = 'none';
+        }
+    }
+
+    // Dozvoli "Enter" tipku u input polju
+    document.getElementById('urlInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') checkProxy();
+    });
+</script>
+
 </body>
 </html>

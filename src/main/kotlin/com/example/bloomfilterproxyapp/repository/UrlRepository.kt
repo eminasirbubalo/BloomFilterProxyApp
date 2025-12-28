@@ -6,5 +6,4 @@ import org.springframework.stereotype.Repository
 
 @Repository
 interface UrlRepository : JpaRepository<Url, String> {
-    // Spring će automatski znati da je 'existsById' provjera za URL
-}
+    }
