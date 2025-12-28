@@ -14,9 +14,9 @@ class UrlCheckService(private val repository: UrlRepository) {
 
     private fun normalizeUrl(url: String): String {
         return url.lowercase()
-            .replace("http://", "")
-            .replace("https://", "")
-            .replace("www.", "")
+            .replaceFirst("https://", "")
+            .replaceFirst("http://", "")
+            .replaceFirst("www.", "")
             .removeSuffix("/")
             .trim()
     }
