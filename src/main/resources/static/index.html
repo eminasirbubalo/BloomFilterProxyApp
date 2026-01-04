@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anti-Phishing Shield | Bloom Filter</title>
+    <title>Anti-Phishing Shield | Bloom Filter Benchmark</title>
     <style>
         :root {
             --primary: #1a73e8;
             --success: #34a853;
             --danger: #d93025;
+            --warning: #fbbc04;
             --dark: #202124;
             --gray: #f8f9fa;
         }
@@ -25,7 +26,7 @@
 
         .container {
             width: 100%;
-            max-width: 800px;
+            max-width: 1200px;
         }
 
         .section {
@@ -93,12 +94,12 @@
             border: 1px solid transparent;
         }
 
-        /* Benchmark Stats Grid */
-        .bench-grid {
+        /* Benchmark Summary */
+        #benchSummary {
             display: none;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 15px;
-            margin-top: 25px;
+            margin: 25px 0;
         }
 
         .stat-card {
@@ -129,6 +130,37 @@
             font-weight: bold;
         }
 
+        /* Detailed Results Table */
+        #detailedResults {
+            display: none;
+            margin-top: 25px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: right;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: var(--gray);
+            font-weight: 600;
+            text-align: left;
+            color: var(--dark);
+        }
+
+        tr:hover { background: #f8f9fa; }
+
+        .fp-good { color: var(--success); font-weight: bold; }
+        .fp-bad { color: var(--danger); font-weight: bold; }
+        .fp-medium { color: var(--warning); font-weight: bold; }
+
         #loader { display: none; text-align: center; margin: 15px 0; color: var(--primary); font-weight: 500; }
     </style>
 </head>
@@ -148,13 +180,14 @@
     </div>
 
     <div class="section">
-        <h2>📊 Analiza Performansi</h2>
-        <p>Usporedite brzinu čiste baze podataka (Regex) naspram optimiziranog Bloom Filter pristupa.</p>
+        <h2>📊 Kompletni Benchmark (100k+ URL‑ova)</h2>
+        <p>Usporedba svih algoritama na stvarnim podacima iz CSV‑a.</p>
 
         <button class="btn-benchmark" id="benchBtn" onclick="runBenchmark()">Pokreni Stress Test</button>
-        <div id="loader">Vrši se simulacija tisuća upita...</div>
+        <div id="loader">Analizira 100k+ URL‑ova... (može potrajati 10-30s)</div>
 
-        <div id="benchResults" class="bench-grid">
+        <!-- Sažetak -->
+        <div id="benchSummary" class="bench-grid">
             <div class="stat-card">
                 <h4>Testirano URL-ova</h4>
                 <div id="resTotal">-</div>
@@ -164,21 +197,41 @@
                 <div id="resDb">-</div>
             </div>
             <div class="stat-card">
-                <h4>Bloom + Baza</h4>
+                <h4>Najbrži Filter</h4>
                 <div id="resBloom">-</div>
             </div>
-            <div class="improvement-box">
-                Ukupno ubrzanje sustava:
-                <span id="resImprove">-</span>
+            <div class="stat-card">
+                <h4>Ubrzanje</h4>
+                <div id="resImprove">-</div>
             </div>
+        </div>
+
+        <!-- Detaljna tablica -->
+        <div id="detailedResults">
+            <h3>Detaljna usporedba algoritama</h3>
+            <table>
+                <thead>
+                <tr>
+                    <th>Algoritam</th>
+                    <th>Insert (ms)</th>
+                    <th>Lookup (ms)</th>
+                    <th>TP</th>
+                    <th>FP</th>
+                    <th>TN</th>
+                    <th>FN</th>
+                    <th>False Positive %</th>
+                    <th>False Negative %</th>
+                </tr>
+                </thead>
+                <tbody id="resultsTableBody">
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-
-
 <script>
-    // 1. FUNKCIJA ZA PROVJERU URL-a (Proxy)
+    // 1. Proxy funkcija (nepromijenjena)
     function checkProxy() {
         const urlInput = document.getElementById('urlInput');
         const urlValue = urlInput.value.trim();
@@ -188,40 +241,86 @@
             return;
         }
 
-        // Umjesto fetch-a, direktno šaljemo browser na tvoj endpoint.
-        // Ako je siguran, kontroler će uraditi redirect (302 Found).
-        // Ako je opasan, kontroler će ispisati HTML poruku (403 Forbidden).
         window.location.href = `/api/proxy?url=${encodeURIComponent(urlValue)}`;
     }
-    // 2. FUNKCIJA ZA BENCHMARK
+
+    // 2. Kompletni benchmark sa svim detaljima
     async function runBenchmark() {
         const btn = document.getElementById('benchBtn');
         const loader = document.getElementById('loader');
-        const grid = document.getElementById('benchResults');
+        const summary = document.getElementById('benchSummary');
+        const detailed = document.getElementById('detailedResults');
 
         btn.disabled = true;
         loader.style.display = 'block';
-        grid.style.display = 'none';
+        summary.style.display = 'none';
+        detailed.style.display = 'none';
 
         try {
             const response = await fetch('/api/benchmark');
             const data = await response.json();
 
+            // Sažetak (kompatibilno sa starim UI)
             document.getElementById('resTotal').innerText = data.total_urls_tested;
             document.getElementById('resDb').innerText = data.db_only_time_ms + " ms";
             document.getElementById('resBloom').innerText = data.bloom_hybrid_time_ms + " ms";
             document.getElementById('resImprove').innerText = data.performance_improvement_percent;
+            summary.style.display = 'grid';
 
-            grid.style.display = 'grid';
+            // Detaljna tablica za SVE algoritme
+            const tableBody = document.getElementById('resultsTableBody');
+            tableBody.innerHTML = '';
+
+            // Filteri
+            Object.entries(data.filters || {}).forEach(([name, stats]) => {
+                const row = tableBody.insertRow();
+                row.innerHTML = `
+                    <td><strong>${name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</strong></td>
+                    <td>${stats.insert_time_ms} ms</td>
+                    <td>${stats.lookup_time_ms} ms</td>
+                    <td>${stats.tp}</td>
+                    <td>${stats.fp}</td>
+                    <td>${stats.tn}</td>
+                    <td>${stats.fn}</td>
+                    <td class="${getFpClass(stats.false_positive_rate)}">${(stats.false_positive_rate * 100).toFixed(4)}%</td>
+                    <td>${(stats.false_negative_rate * 100).toFixed(4)}%</td>
+                `;
+            });
+
+            // Baza kao posljednji red
+            if (data.database) {
+                const dbStats = data.database;
+                const row = tableBody.insertRow();
+                row.innerHTML = `
+                    <td><strong style="color: var(--primary);">DATABASE (H2)</strong></td>
+                    <td>-</td>
+                    <td>${dbStats.lookup_time_ms} ms</td>
+                    <td>${dbStats.tp}</td>
+                    <td>${dbStats.fp}</td>
+                    <td>${dbStats.tn}</td>
+                    <td>${dbStats.fn}</td>
+                    <td class="${getFpClass(dbStats.false_positive_rate)}">${(dbStats.false_positive_rate * 100).toFixed(4)}%</td>
+                    <td>${(dbStats.false_negative_rate * 100).toFixed(4)}%</td>
+                `;
+            }
+
+            detailed.style.display = 'block';
+
         } catch (e) {
-            alert("Greška prilikom izvršavanja benchmarka.");
+            alert("Greška prilikom izvršavanja benchmarka: " + e.message);
         } finally {
             btn.disabled = false;
             loader.style.display = 'none';
         }
     }
 
-    // Dozvoli "Enter" tipku u input polju
+    function getFpClass(fpRate) {
+        if (fpRate < 0.01) return 'fp-good';
+        if (fpRate < 0.05) return 'fp-medium';
+        return 'fp-bad';
+    }
+
+    // Enter tipka
     document.getElementById('urlInput').addEventListener('keypress', function (e) {
         if (e.key === 'Enter') checkProxy();
     });

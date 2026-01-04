@@ -1,16 +1,20 @@
 package com.example.bloomfilterproxyapp.service
 
-import com.example.bloomfilterproxyapp.filter.BloomFilter
+import com.example.bloomfilterproxyapp.filter.*
+import com.example.bloomfilterproxyapp.model.Stats
 import com.example.bloomfilterproxyapp.model.Url
 import org.springframework.stereotype.Service
 import com.example.bloomfilterproxyapp.repository.UrlRepository
-import kotlin.system.measureNanoTime
 
 @Service
-class UrlCheckService(private val repository: UrlRepository) {
-
-    // m i k će se automatski izračunati u ManualBloomFilter klasi
-    private val bloomFilter = BloomFilter(650000, 0.01)
+class UrlCheckService(
+    private val repository: UrlRepository,
+    private val dataLoaderService: DataLoaderService,
+    private val bloomFilter: BloomFilter,
+    private val singleHashBloom: SingleHashBloomFilter,
+    private val countingBloom: CountingBloomFilter,
+    private val cuckooFilter: CuckooFilter
+) {
 
     private fun normalizeUrl(url: String): String {
         return url.lowercase()
@@ -23,51 +27,131 @@ class UrlCheckService(private val repository: UrlRepository) {
 
     fun addToBlacklist(url: String, type: String) {
         val normalizedUrl = normalizeUrl(url)
-        // 1. Dodaj u Bloom Filter (u RAM-u)
         bloomFilter.add(normalizedUrl)
-
-        // 2. Dodaj u H2 Bazu (na disk/trajno)
-        // Napomena: Ovo može biti sporo za 650k zapisa.
-        // Ako ti baza ne treba za kolegij, možeš ovaj dio zakomentirati
         repository.save(Url(normalizedUrl, type))
     }
 
+//    fun checkIfUrlIsSafe(url: String): Boolean {
+//        val normalizedUrl = normalizeUrl(url)
+//        if (!bloomFilter.mightContain(normalizedUrl)) {
+//            return true
+//        }
+//        return !repository.existsById(normalizedUrl)
+//    }
+
     fun checkIfUrlIsSafe(url: String): Boolean {
         val normalizedUrl = normalizeUrl(url)
+        println("🔍 PROXY CHECK: original='$url' → normalized='$normalizedUrl'")
 
-        if (!bloomFilter.mightContain(normalizedUrl)) {
+        val inBloom = bloomFilter.mightContain(normalizedUrl)
+        println("   Bloom filter kaže: $inBloom")
+
+        if (!inBloom) {
+            println("   ✅ SIGURAN (nije u Bloom filteru)")
             return true
         }
-        return !repository.existsById(normalizedUrl)
+
+        val inDb = repository.existsById(normalizedUrl)
+        println("   Baza kaže: $inDb")
+
+        val isSafe = !inDb
+        println("   FINALNA ODLUKA: ${if (isSafe) "✅ SIGURAN" else "❌ BLOKIRAN"}")
+        return isSafe
     }
 
-    fun runBenchmark(testUrls: List<String>): Map<String, Any> {
-        val total = testUrls.size
 
-        // 1. Mjerenje: Samo Baza
-        val timeDbOnly = measureNanoTime {
-            testUrls.forEach {
-                repository.existsById(normalizeUrl(it))
+    fun runCsvBenchmark(): Map<String, Any> {
+        val (malicious, benign) = dataLoaderService.loadFromCsvForBenchmark(
+            maxMalicious = 100_000,
+            maxBenign = 100_000
+        )
+
+        val filters: Map<String, MembershipFilter> = mapOf(
+            "bloom_optimal" to bloomFilter,
+            "bloom_single_hash" to singleHashBloom,
+            "counting_bloom" to countingBloom,
+            "cuckoo" to cuckooFilter
+        )
+
+        val statsMap = mutableMapOf<String, Stats>()
+
+        // Insert faza u filtere
+        for ((name, filter) in filters) {
+            val stats = Stats()
+            val start = System.nanoTime()
+            malicious.forEach { filter.add(it) }
+            val end = System.nanoTime()
+            stats.insertTimeMs = (end - start) / 1_000_000
+            statsMap[name] = stats
+        }
+
+        // Lookup faza na malicioznim i benign URL-ovima
+        for ((name, filter) in filters) {
+            val stats = statsMap[name]!!
+
+            var start = System.nanoTime()
+            malicious.forEach {
+                val res = filter.mightContain(it)
+                if (res) stats.tp++ else stats.fn++
             }
-        } / 1_000_000.0 // Prebacujemo u milisekunde
+            var end = System.nanoTime()
+            stats.lookupTimeMs += (end - start) / 1_000_000
 
-        // 2. Mjerenje: Bloom Filter + Baza (Hibrid)
-        val timeWithBloom = measureNanoTime {
-            testUrls.forEach {
-                val clean = normalizeUrl(it)
-                if (bloomFilter.mightContain(clean)) {
-                    repository.existsById(clean)
-                }
+            start = System.nanoTime()
+            benign.forEach {
+                val res = filter.mightContain(it)
+                if (res) stats.fp++ else stats.tn++
             }
-        } / 1_000_000.0
+            end = System.nanoTime()
+            stats.lookupTimeMs += (end - start) / 1_000_000
+        }
 
-        val improvement = ((timeDbOnly - timeWithBloom) / timeDbOnly) * 100
+        // Referenca – čista baza
+        val dbStats = Stats()
+        val startDb = System.nanoTime()
+        malicious.forEach {
+            val found = repository.existsById(it)
+            if (found) dbStats.tp++ else dbStats.fn++
+        }
+        benign.forEach {
+            val found = repository.existsById(it)
+            if (found) dbStats.fp++ else dbStats.tn++
+        }
+        val endDb = System.nanoTime()
+        dbStats.lookupTimeMs = (endDb - startDb) / 1_000_000
+
+        val totalTested = malicious.size + benign.size
+        val dbOnlyTime = dbStats.lookupTimeMs.toDouble()
+        val bloomStats = statsMap["bloom_optimal"]!!
+        val bloomTime = bloomStats.lookupTimeMs.toDouble()
+        val improvement = if (dbOnlyTime == 0.0) 0.0 else (dbOnlyTime - bloomTime) / dbOnlyTime * 100.0
 
         return mapOf(
-            "total_urls_tested" to total,
-            "db_only_time_ms" to "%.3f".format(timeDbOnly),
-            "bloom_hybrid_time_ms" to "%.3f".format(timeWithBloom),
-            "performance_improvement_percent" to "${"%.2f".format(improvement)}%"
+            "total_urls_tested" to totalTested,
+            "db_only_time_ms" to dbOnlyTime,
+            "bloom_hybrid_time_ms" to bloomTime,
+            "performance_improvement_percent" to String.format("%.2f %%", improvement),
+            "filters" to statsMap.mapValues { (_, s) ->
+                mapOf(
+                    "insert_time_ms" to s.insertTimeMs,
+                    "lookup_time_ms" to s.lookupTimeMs,
+                    "tp" to s.tp,
+                    "fp" to s.fp,
+                    "tn" to s.tn,
+                    "fn" to s.fn,
+                    "false_positive_rate" to s.falsePositiveRate,
+                    "false_negative_rate" to s.falseNegativeRate
+                )
+            },
+            "database" to mapOf(
+                "lookup_time_ms" to dbStats.lookupTimeMs,
+                "tp" to dbStats.tp,
+                "fp" to dbStats.fp,
+                "tn" to dbStats.tn,
+                "fn" to dbStats.fn,
+                "false_positive_rate" to dbStats.falsePositiveRate,
+                "false_negative_rate" to dbStats.falseNegativeRate
+            )
         )
     }
 }
